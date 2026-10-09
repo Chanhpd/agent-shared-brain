@@ -225,21 +225,27 @@ abstract final class AdsNavigationHelper {
     }
   }
 
-  static void _safePop(BuildContext context) {
+  static void _safePop(BuildContext context, {Object? result}) {
     if (!context.mounted) return;
+    final route = ModalRoute.of(context);
+    // Tuyệt đối không pop nếu route này đã bắt đầu đóng hoặc không phải route hiện tại
+    if (route != null && !route.isCurrent) return;
+
     try {
       if (context.canPop()) {
-        context.pop();
+        context.pop(result);
         return;
       }
     } catch (_) {}
 
     try {
       if (Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
+        Navigator.of(context).pop(result);
       }
     } catch (_) {}
   }
+
+  // NOTE (Bug Vault): Chi tiết xem bug_vault/flutter/gorouter_ghost_pop_and_double_pop_crash.md
 
   /// Action Interstitial (Sau khi Save/Apply/Download + Re-entrancy Lock)
   static Future<void> showActionInterstitial(
