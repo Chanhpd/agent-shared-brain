@@ -2,9 +2,10 @@
 name: agent-shared-brain
 description: >-
   Bộ quy chuẩn kỹ thuật dùng chung cho mọi dự án: Playbooks (Ads Show Rate >90%, Triệt tiêu ANR/ARN 0.00%, Tối ưu 60 FPS), 
-  công cụ chẩn đoán AdMob Ad Unit ID độc lập, và kho tri thức Agent Nodes (Bug Vault / Post-mortems) để không bao giờ lặp lại lỗi cũ.
+  công cụ chẩn đoán AdMob Ad Unit ID độc lập, kho tri thức Agent Nodes (Bug Vault / Post-mortems) để không bao giờ lặp lại lỗi cũ,
+  và kỹ thuật chuẩn hóa Adaptive App Launcher Icon to full viền không bị viền trắng.
   Kích hoạt khi: implement hoặc debug Ads/ANR/Vitals, chạy chẩn đoán Ad Unit ID, review code theo quy chuẩn, 
-  hoặc khi người dùng yêu cầu "lưu lỗi này vào playbook / ghi agent node".
+  làm/sửa icon app to full tràn viền, hoặc khi người dùng yêu cầu "lưu lỗi này vào playbook / ghi agent node".
 ---
 
 # Agent Shared Brain & Playbooks Engine
@@ -27,6 +28,11 @@ Repository tri thức tập trung: [agent-shared-brain](https://github.com/Chanh
 3. **Lưu Trữ & Tái Sử Dụng Bài Học Thực Chiến (Bug Vault / Agent Nodes):**
    - Khi dự án A gặp và xử lý xong một lỗi chung (generic bug) -> Tự động ghi vào `bug_vault/`.
    - Khi sang dự án B -> Tra cứu trước để phòng tránh, không lặp lại sai lầm.
+
+4. **Chuẩn Hóa Adaptive Launcher Icon "To Full Viền" (Android 8.0+):**
+   - Triệt tiêu lỗi icon lọt thỏm trong viền trắng mặc định khi thiếu cấu hình Adaptive Icon.
+   - Kỹ thuật kết hợp `adaptive_icon_background` + `<inset android:inset="16%" />` giúp icon hiển thị to tối đa, tràn viền không xén chi tiết trên mọi thiết bị (Samsung, Pixel, Xiaomi, Oppo).
+   - Xem chi tiết tại: `bug_vault/android/adaptive_launcher_icon_full_bleed.md`.
 
 ---
 

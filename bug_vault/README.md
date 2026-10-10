@@ -25,6 +25,9 @@ bug_vault/
 ### Ads
 1. **[Rewarded Format Mismatch & Fallback Strategy](ads/CASE_STUDY_REWARDED_FORMAT_MISMATCH.md)**: Xử lý lỗi Code 3 và lệch định dạng giữa RewardedAd và RewardedInterstitialAd.
 
+### Android
+1. **[Android Adaptive Launcher Icon Full Bleed](android/adaptive_launcher_icon_full_bleed.md)**: Xóa sổ viền trắng xấu xí, fix lỗi icon lọt thỏm/cắt cụt mép trên Android 8.0+ bằng cơ chế Adaptive Inset 16% tràn viền tuyệt đối.
+
 ## Nguyên Tắc Hoạt Động
 1. **Lập tài liệu ngay khi giải quyết xong:** Khi agent vừa fix xong một bug lạ hoặc người dùng yêu cầu "ghi lại bug này", một markdown note mới sẽ được tạo trong thư mục tương ứng.
 2. **Kế thừa tri thức:** Khi bước vào một dự án mới, Agent có thể tra cứu nhanh thư mục này để phòng ngừa rủi ro ngay từ khâu thiết kế.
