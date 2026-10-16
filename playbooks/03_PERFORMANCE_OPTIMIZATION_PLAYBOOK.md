@@ -187,6 +187,21 @@ RepaintBoundary(
 )
 ```
 
+### 4.4. Phân Trang & Cuộn Vô Tận (Pagination & Load More) Thay Vì Fetch Hàng Loạt (Bulk Fetching)
+* **Vấn đề (Anti-pattern):** Tải danh sách lớn cùng lúc (`limit = 100` hoặc không giới hạn) làm chậm TTFB, gây tăng vọt RAM (spike), áp lực GC (Garbage Collection), và drop FPS nghiêm trọng khi cuộn nhanh.
+* **Quy chuẩn kiến trúc 4 tầng:**
+  1. **Data Layer:** Quy định `pageSize = 20`. Cả Remote API và Local Fallback (sublist) đều nhận `page` và `limit`.
+  2. **Domain Layer:** `Params(page, limit)` kế thừa `Equatable`.
+  3. **Cubit & State:**
+     - `HomeLoaded` lưu `page`, `hasReachedMax`, `isLoadingMore`.
+     - **Re-entrancy Guard:** `if (isLoadingMore || hasReachedMax || isRefreshing) return;` chống spam request khi cuộn nhanh.
+     - **ID Deduplication:** Khử trùng lặp ID bằng `Set` trước khi merge danh sách mới:
+       `final existingIds = activeState.themes.map((t) => t.id).toSet();`
+       `final uniqueNewThemes = newThemes.where((t) => !existingIds.contains(t.id)).toList();`
+     - **Reset khi đổi danh mục:** Reset về `page = 1, hasReachedMax = false`.
+  4. **UI Layer:** Dùng `NotificationListener<ScrollNotification>` với ngưỡng `extentAfter < 400` để tự động tải trang kế tiếp trước khi chạm đáy mà không gây gián đoạn mắt người dùng.
+* **Chi tiết case study & code diff:** Xem `bug_vault/flutter/pagination_load_more_vs_bulk_fetching.md`.
+
 ---
 
 ## 5. Tối Ưu Bộ Cài Đặt (App Size Reduction & R8 / ProGuard)
