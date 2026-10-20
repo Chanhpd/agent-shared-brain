@@ -1,11 +1,11 @@
 ---
 name: agent-shared-brain
 description: >-
-  Bộ quy chuẩn kỹ thuật dùng chung cho mọi dự án: Playbooks (Ads Show Rate >90%, Triệt tiêu ANR/ARN 0.00%, Tối ưu 60 FPS), 
-  công cụ chẩn đoán AdMob Ad Unit ID độc lập, kho tri thức Agent Nodes (Bug Vault / Post-mortems) để không bao giờ lặp lại lỗi cũ,
-  và kỹ thuật chuẩn hóa Adaptive App Launcher Icon to full viền không bị viền trắng.
-  Kích hoạt khi: implement hoặc debug Ads/ANR/Vitals, chạy chẩn đoán Ad Unit ID, review code theo quy chuẩn, 
-  làm/sửa icon app to full tràn viền, hoặc khi người dùng yêu cầu "lưu lỗi này vào playbook / ghi agent node".
+  Bộ quy chuẩn kỹ thuật dùng chung cho mọi dự án: Playbooks (Ads Show Rate >90%, Triệt tiêu ANR/ARN 0.00%, Tối ưu 60 FPS,
+  Setup Release Build Key tự động), công cụ chẩn đoán AdMob Ad Unit ID độc lập, kho tri thức Agent Nodes (Bug Vault / Post-mortems)
+  để không bao giờ lặp lại lỗi cũ, và kỹ thuật chuẩn hóa Adaptive App Launcher Icon to full viền không bị viền trắng.
+  Kích hoạt khi: implement hoặc debug Ads/ANR/Vitals, setup signing key cho bản release AAB/APK, chạy chẩn đoán Ad Unit ID,
+  review code theo quy chuẩn, làm/sửa icon app to full tràn viền, hoặc khi người dùng yêu cầu "lưu lỗi này vào playbook / ghi agent node".
 ---
 
 # Agent Shared Brain & Playbooks Engine
@@ -20,6 +20,7 @@ Repository tri thức tập trung: [agent-shared-brain](https://github.com/Chanh
    - Đảm bảo tỷ lệ hiển thị quảng cáo (Show Rate) > 90%, Match Rate cao, eCPM tối ưu.
    - Triệt tiêu lỗi ANR/ARN (Application Not Responding) đạt ngưỡng an toàn Android Vitals (< 0.47%).
    - Tối ưu hiệu năng 60 FPS, quản lý bộ nhớ Bitmap, vòng đời ứng dụng.
+   - **Tự động hóa thiết lập Signing Key phát hành (Release Build):** Tự động dò tìm bộ khóa từ `app-keyboard`, copy `key.properties` và `upload-keystore.jks`, cấu hình `build.gradle.kts` / `build.gradle` với fallback an toàn, bảo vệ `.gitignore` tuyệt đối không commit key lên Git.
 
 2. **Chẩn Đoán Trực Tiếp Ad Unit ID (Standalone Diagnostic Runner):**
    - Kiểm tra tính hợp lệ của Ad Unit ID AdMob độc lập 100% không qua logic phức tạp của app.
@@ -46,6 +47,9 @@ Repository tri thức tập trung: [agent-shared-brain](https://github.com/Chanh
 Khi người dùng yêu cầu implement liên quan đến Ads, IAP/Paywall, Lifecycle, ANR, hoặc Performance/Release:
 
 ### Bước 1: Tra cứu Playbook tương ứng trong `playbooks/` & Quy chuẩn R8
+- **Release Signing & Build Keys:** Đọc `playbooks/04_BUILD_KEY_SETUP_PLAYBOOK.md`
+  - Chạy `bash ~/.gemini/config/skills/agent-shared-brain/scripts/setup_signing_keys.sh` để tự động copy keys từ `app-keyboard` và cấu hình `build.gradle(.kts)`.
+  - Luôn kiểm tra `git status --ignored` để bảo đảm key không bao giờ bị commit lên GitHub.
 - **Ads & Monetization:** Đọc `playbooks/01_ADS_MONETIZATION_PLAYBOOK.md`
   - Tuân thủ 10 quy tắc sống còn (không eager-load Native Ad, static slot key, adaptive timeout 8-10s, UMP fail-open 3s, không cross-format fallback).
 - **In-App Purchase & Paywall (RevenueCat / Billing / Release Minification):**

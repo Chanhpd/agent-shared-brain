@@ -3,3 +3,10 @@
 *~
 .idea/
 .vscode/
+
+# Security: Never commit signing keys or keystores
+key.properties
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
