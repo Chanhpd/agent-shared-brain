@@ -34,15 +34,23 @@ Repository tri thức tập trung: [agent-shared-brain](https://github.com/Chanh
    - Kỹ thuật kết hợp `adaptive_icon_background` + `<inset android:inset="16%" />` giúp icon hiển thị to tối đa, tràn viền không xén chi tiết trên mọi thiết bị (Samsung, Pixel, Xiaomi, Oppo).
    - Xem chi tiết tại: `bug_vault/android/adaptive_launcher_icon_full_bleed.md`.
 
+5. **Bảo Vệ In-App Purchase & Parcelables Trước R8 Full Mode (Android 13+):**
+   - Triệt tiêu lỗi sập app Fatal Exception `NullPointerException: Class.isInterface()` khi mở Paywall/VIP trên bản Release Android 13+ do R8 Full Mode strip mất `EnclosingClass` của Parcelable Creator.
+   - Bắt buộc cấu hình ProGuard rules giữ lại `android.os.Parcelable$Creator`, `com.revenuecat.purchases.**`, và tắt `android.enableR8.fullMode=false` trong `gradle.properties`.
+   - Xem chi tiết tại: `bug_vault/android/r8_android13_parcelable_revenuecat_paywall_npe.md`.
+
 ---
 
 ## 2. Quy Trình Kích Hoạt Khi Implement Chức Năng
 
-Khi người dùng yêu cầu implement liên quan đến Ads, Lifecycle, ANR, hoặc Performance:
+Khi người dùng yêu cầu implement liên quan đến Ads, IAP/Paywall, Lifecycle, ANR, hoặc Performance/Release:
 
-### Bước 1: Tra cứu Playbook tương ứng trong `playbooks/`
+### Bước 1: Tra cứu Playbook tương ứng trong `playbooks/` & Quy chuẩn R8
 - **Ads & Monetization:** Đọc `playbooks/01_ADS_MONETIZATION_PLAYBOOK.md`
   - Tuân thủ 10 quy tắc sống còn (không eager-load Native Ad, static slot key, adaptive timeout 8-10s, UMP fail-open 3s, không cross-format fallback).
+- **In-App Purchase & Paywall (RevenueCat / Billing / Release Minification):**
+  - Luôn kiểm tra `android/app/proguard-rules.pro` có đủ keep rules cho `android.os.Parcelable$Creator` và `com.revenuecat.purchases.**`.
+  - Luôn kiểm tra `android/gradle.properties` đã thêm `android.enableR8.fullMode=false` để chống crash `readParcelableCreatorInternal` trên Android 13+.
 - **ANR & Vitals:** Đọc `playbooks/02_ANR_ARN_PREVENTION_PLAYBOOK.md`
   - Bật cờ tối ưu `OPTIMIZE_INITIALIZATION` & `OPTIMIZE_AD_LOADING` trong `AndroidManifest.xml`.
   - Không I/O hay font loading trên Main Thread, dùng SingleThreadExecutor cho Disk I/O.

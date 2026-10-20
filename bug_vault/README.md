@@ -29,6 +29,7 @@ bug_vault/
 
 ### Android
 1. **[Android Adaptive Launcher Icon Full Bleed](android/adaptive_launcher_icon_full_bleed.md)**: Xóa sổ viền trắng xấu xí, fix lỗi icon lọt thỏm/cắt cụt mép trên Android 8.0+ bằng cơ chế Adaptive Inset 16% tràn viền tuyệt đối.
+2. **[R8 Full Mode & Android 13+ Parcelable Crash in RevenueCat Paywall](android/r8_android13_parcelable_revenuecat_paywall_npe.md)**: Triệt tiêu lỗi sập app Fatal Exception `NullPointerException: Class.isInterface()` khi mở Paywall/VIP trên bản Release Android 13+ do R8 strip mất EnclosingClass của Parcelable Creator; chuẩn hóa bộ đôi ProGuard keep rules và cờ `android.enableR8.fullMode=false`.
 
 ## Nguyên Tắc Hoạt Động
 1. **Lập tài liệu ngay khi giải quyết xong:** Khi agent vừa fix xong một bug lạ hoặc người dùng yêu cầu "ghi lại bug này", một markdown note mới sẽ được tạo trong thư mục tương ứng.
