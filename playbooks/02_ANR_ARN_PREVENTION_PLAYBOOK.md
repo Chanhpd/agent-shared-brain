@@ -17,6 +17,8 @@
    - [2.8. Khởi tạo Third-Party SDK không có Timeout trong Splash (RevenueCat/IAP)](#28-khởi-tạo-third-party-sdk-không-có-timeout-trong-splash-revenuecatiap)
    - [2.9. Crash thiếu thư viện native `libflutter.so` (`MissingLibraryException`)](#29-crash-thiếu-thư-viện-native-libflutterso-missinglibraryexception)
    - [2.10. Crash `PlatformViewsController resize NPE` trên AdWidget / PlatformView](#210-crash-platformviewscontroller-resize-npe-trên-adwidget--platformview)
+   - [2.11. Nghẽn ARM Mali GPU Shader Compiler & CPU Double-Buffering (`cmpbe_v2_compile_multiple_shaders`)](#211-nghẽn-arm-mali-gpu-shader-compiler--cpu-double-buffering-cmpbe_v2_compile_multiple_shaders)
+   - [2.12. Nghẽn Hàng Đợi Main Looper do Lệnh Gọi IPC Clipboard & Invalidation Flooding (`nativePollOnce` / `__ioctl`)](#212-nghẽn-hàng-đợi-main-looper-do-lệnh-gọi-ipc-clipboard--invalidation-flooding-nativepollonce---ioctl)
 3. [Mã Nguồn Khắc Phục Chuẩn (Reference Implementation)](#3-mã-nguồn-khắc-phục-chuẩn-reference-implementation)
    - [3.1. Asynchronous SQLite Helper với ThreadPool Executor](#31-asynchronous-sqlite-helper-với-threadpool-executor)
    - [3.2. Background Typeface & Asset Loading Engine](#32-background-typeface--asset-loading-engine)
@@ -130,6 +132,31 @@ Hệ điều hành Android bắn hộp thoại ANR (*"App isn't responding"*) kh
 ### 2.10. Crash `PlatformViewsController resize NPE` trên AdWidget / PlatformView
 * **Cơ chế lỗi:** Khi widget hiển thị AdWidget hoặc WebView bị dispose, `PlatformView` native bị hủy nhưng Flutter engine vẫn đang trong pha layout/resize frame cuối cùng. Engine gọi xuống `PlatformViewsController.onResize`, truy cập `LayoutParams.width` trên một view đã null $\rightarrow$ `NullPointerException` làm văng ứng dụng lập tức.
 * **Giải pháp:** Áp dụng cơ chế Triple Guard: Safe Factory với persistent fallback view ở Android Native + Hoãn `disposeSlot()` qua `WidgetsBinding.addPostFrameCallback` ở Flutter + Global Error Filter tại `main.dart`.
+
+---
+
+### 2.11. Nghẽn ARM Mali GPU Shader Compiler & CPU Double-Buffering (`cmpbe_v2_compile_multiple_shaders`)
+* **Cơ chế lỗi:**
+  * Xuất hiện trên các thiết bị Android sử dụng vi xử lý đồ họa **ARM Mali** (rất phổ biến trên Samsung Galaxy A/M series và Xiaomi Redmi dùng chip Exynos / MediaTek).
+  * Trong `FullRgbKeyboardView.kt`: Cơ chế cũ cấp phát hai Bitmap `ARGB_8888` full màn hình (`ledBufferBitmap` và `keyMaskBitmap`), thực hiện `bufCanvas.drawColor(CLEAR)`, copy bitmap và chạy CPU `SRC_IN` blending 60 lần/giây, sau đó upload texture 3MB lên GPU mỗi frame. Băng thông CPU bị chiếm dụng >700 MB/s.
+  * Trong Flutter CustomPainter: Sử dụng `MaskFilter.blur` trực tiếp trên một `Paint` gắn dynamic shader (`SweepGradient` xoay liên tục theo animation). Trình điều khiển đồ họa Mali (`libGLES_mali.so`) buộc phải biên dịch các biến thể fragment shader Gaussian convolution + gradient rotation một cách đồng bộ (`cmpbe_v2_compile_multiple_shaders`) trên luồng UI.
+  * Khi người dùng vừa mở bàn phím và chạm gõ, GPU driver bị block quá 5 giây $\rightarrow$ Kích hoạt ANR `Input dispatching timed out: [libGLES_mali.so] cmpbe_v2_compile_multiple_shaders`.
+* **Giải pháp:**
+  1. **Loại bỏ `MaskFilter.blur` khỏi Paint có Shader động trong Flutter:** Chuyển sang kỹ thuật dual-pass stroke outline với độ dày mở rộng và alpha gradient tự nhiên, vừa giữ nguyên hiệu ứng neon vừa triệt tiêu việc GPU driver phải compile blur shader tổ hợp.
+  2. **Thay thế CPU Double-Buffering bằng Hardware `saveLayer` trong Android Native:** Tận dụng trực tiếp GPU FBO qua `canvas.saveLayer(0f, 0f, w, h, null)` và compositing phần cứng bằng `themeEngine.drawLedOverlaySrcIn(canvas, ...)`. Xóa bỏ hoàn toàn `ledBufferBitmap`, giải phóng 100% việc copy CPU per-frame và giảm 4MB RAM.
+  3. **Caching mặt nạ phím (`keyMaskBitmap`):** Chỉ vẽ lại vào mask khi `isKeyMaskDirty == true` (khi phím/kích thước thay đổi), không vẽ lại mỗi frame animation.
+  4. **Fallback An Toàn:** Luôn bọc trong khối `try-catch` và kiểm tra `canvas.isHardwareAccelerated`; nếu thiết bị gặp sự cố GPU, tự động chuyển về vẽ vector phẳng trực tiếp (`themeEngine.drawKeyBorders`).
+
+---
+
+### 2.12. Nghẽn Hàng Đợi Main Looper do Lệnh Gọi IPC Clipboard & Invalidation Flooding (`nativePollOnce` / `__ioctl`)
+* **Cơ chế lỗi:**
+  * Lỗi `nativePollOnce` và `__ioctl` chiếm tới 26% tổng sự kiện ANR trong các bản phát hành. Đây là dấu hiệu của **nghẽn hàng đợi (Looper Congestion)**:
+  * Trong `LedInputMethodService.kt`: Hàm `onStartInputView()` gọi trực tiếp `captureCurrentClipboard()`, thực hiện truy cập `clipboardManager?.primaryClip` trên luồng chính. Lệnh gọi Binder IPC liên tiến trình tới Android Clipboard Service có thể bị hoãn vô thời hạn nếu hệ thống đang tải nặng.
+  * Trong `FullRgbKeyboardView.kt`: Các hàm lắng nghe chạm `onTouchEvent` (`ACTION_DOWN`, `ACTION_POINTER_DOWN`, `ACTION_MOVE`) gọi dồn dập `postInvalidateOnAnimation()` ngay cả khi `KeyboardThemeEngine` đã có `animator` chạy đều đặn ở 60 FPS, làm ngập hàng đợi thông điệp Vsync của Choreographer.
+* **Giải pháp:**
+  1. **Đẩy IPC Clipboard sang Luồng Nền:** Bao bọc toàn bộ logic truy cập `clipboardManager?.primaryClip` bên trong `initExecutor.execute { ... }`. Luồng chính không bao giờ bị giữ bởi IPC Binder.
+  2. **Khóa Chống Invalidation Flooding:** Kiểm tra cờ `!themeEngine.isAnimationRunning` trước khi gọi `postInvalidateOnAnimation()`. Khi hoạt ảnh đang chạy, Choreographer đã được lên lịch tự nhiên, loại bỏ hoàn toàn các lệnh invalidation dư thừa khi người dùng vuốt/gõ nhanh.
 
 ---
 
