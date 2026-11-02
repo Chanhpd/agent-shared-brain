@@ -160,6 +160,26 @@ Hệ điều hành Android bắn hộp thoại ANR (*"App isn't responding"*) kh
 
 ---
 
+### 2.13. Tra cứu SystemService lặp lại trên Main Thread khi tương tác gõ phím (`KeyboardFeedbackManager.triggerHaptic`)
+* **Cơ chế lỗi:**
+  * Mỗi lần người dùng nhấn một phím trên bàn phím ảo (hàng trăm lần mỗi phút), hàm `triggerHaptic()` được gọi trực tiếp trên Main Thread.
+  * Nếu trong `triggerHaptic()` gọi `context.getSystemService(Context.VIBRATOR_SERVICE)` mỗi lần nhấn, hệ thống phải thực hiện lookup qua `ServiceManager` và `ContextImpl` qua IPC Binder.
+  * Khi hệ điều hành Android đang chịu tải (hoặc thermal throttling), các cuộc gọi IPC tìm kiếm service bị chậm lại, làm nghẽn Main Looper và kích hoạt `Input dispatching timed out` ANR.
+* **Giải pháp:**
+  * Cache đối tượng `Vibrator` một lần duy nhất bằng `by lazy` trong Manager/Service:
+    ```kotlin
+    private val vibrator: Vibrator? by lazy {
+        try {
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        } catch (_: Exception) {
+            null
+        }
+    }
+    ```
+  * Không gọi `getSystemService` lặp lại trên Main Thread trong vòng đời gõ phím.
+
+---
+
 ## 3. Mã Nguồn Khắc Phục Chuẩn (Reference Implementation)
 
 ### 3.1. Asynchronous SQLite Helper với ThreadPool Executor
