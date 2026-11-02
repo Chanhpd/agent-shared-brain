@@ -160,23 +160,45 @@ Hệ điều hành Android bắn hộp thoại ANR (*"App isn't responding"*) kh
 
 ---
 
-### 2.13. Tra cứu SystemService lặp lại trên Main Thread khi tương tác gõ phím (`KeyboardFeedbackManager.triggerHaptic`)
+### 2.13. Bão Lệnh Rung Khi Giữ Phím & Tra Cứu SystemService Lặp Lại (`KeyboardFeedbackManager.triggerHaptic` & `nativePollOnce`)
 * **Cơ chế lỗi:**
-  * Mỗi lần người dùng nhấn một phím trên bàn phím ảo (hàng trăm lần mỗi phút), hàm `triggerHaptic()` được gọi trực tiếp trên Main Thread.
-  * Nếu trong `triggerHaptic()` gọi `context.getSystemService(Context.VIBRATOR_SERVICE)` mỗi lần nhấn, hệ thống phải thực hiện lookup qua `ServiceManager` và `ContextImpl` qua IPC Binder.
-  * Khi hệ điều hành Android đang chịu tải (hoặc thermal throttling), các cuộc gọi IPC tìm kiếm service bị chậm lại, làm nghẽn Main Looper và kích hoạt `Input dispatching timed out` ANR.
-* **Giải pháp:**
-  * Cache đối tượng `Vibrator` một lần duy nhất bằng `by lazy` trong Manager/Service:
-    ```kotlin
-    private val vibrator: Vibrator? by lazy {
-        try {
-            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        } catch (_: Exception) {
-            null
-        }
-    }
-    ```
-  * Không gọi `getSystemService` lặp lại trên Main Thread trong vòng đời gõ phím.
+  * **Spam lệnh rung khi giữ phím (Auto-repeat 50ms):** Khi người dùng giữ phím Delete/Backspace, ứng dụng lặp lại mỗi 50ms (20 lần/giây) để xóa chữ. Nếu vòng lặp này gọi `triggerHaptic()`, có tới 40-60 lệnh rung dồn dập vào driver rung chỉ trong 2 giây.
+  * **Tra cứu lặp lại & IPC Binder:** Mỗi lần rung, nếu gọi `context.getSystemService(...)` và `vibrator.hasVibrator()`, hệ thống phải thực hiện 2 cuộc gọi IPC Binder liên tục sang `system_server`.
+  * Khi driver rung hoặc HAL bị quá tải, Main Thread bị block đứng im trong `SystemVibrator.vibrate()`, làm cạn kiệt hàng đợi Looper (`nativePollOnce`), gây ANR nghiêm trọng trên các bản phát hành (chiếm tới 9.8% tổng lỗi).
+* **Giải pháp chuẩn:**
+  * **Tắt rung trong vòng lặp auto-repeat:** Chỉ rung 1 lần duy nhất khi người dùng vừa nhấn phím xuống (`ACTION_DOWN`), tuyệt đối không rung lặp lại trong `deleteRunnable` 50ms.
+  * **Cache phần cứng & Throttle 35ms:** Cache đối tượng `Vibrator` (hỗ trợ `VibratorManager` trên Android 12+) và cờ `hasVibratorHardware`. Bổ sung bộ lọc tần suất `minHapticIntervalMs = 35L`.
+  * **Ưu tiên Native View Haptic:** Sử dụng `view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)` thay vì gọi trực tiếp `Vibrator` service.
+
+---
+
+### 2.14. Nạp Dữ Liệu Lớn Đồng Bộ & Tranh Chấp Khóa `@Synchronized` Trên Main Thread (`handleKeyboardAction` & `art::ConditionVariable::WaitHoldingLocks`)
+* **Cơ chế lỗi:**
+  * **Fallback nạp đồng bộ (Synchronous Ingestion):** Khi người dùng bắt đầu gõ phím, hàm tra cứu gợi ý (`getSuggestions()`) kiểm tra bộ nhớ RAM. Nếu dữ liệu từ điển chưa sẵn sàng, nó thực hiện đọc file đĩa đồng bộ và duyệt 40.000 dòng bằng Regex `Regex.find()`, chiếm dụng Main Thread từ 1-3 giây.
+  * **Tranh chấp khóa monitor (`WaitHoldingLocks`):** Đặt từ khóa `@Synchronized` trên hàm nạp từ điển khiến toàn bộ Singleton bị khóa. Khi background worker đang nạp ngầm, Main Thread nhảy vào gõ phím và cố lấy lock sẽ bị treo cứng ở tầng Android Runtime C++: `art::ConditionVariable::WaitHoldingLocks`. Khi quá 5 giây, Google Play kích hoạt ANR `Input dispatching timed out (No focused window)`.
+* **Giải pháp chuẩn:**
+  * **Cam kết Non-Blocking O(1):** Hàm tra cứu từ Main Thread tuyệt đối không bao giờ nạp đĩa đồng bộ. Nếu chưa có trong RAM, kích hoạt nạp ngầm và trả ngay từ thô (raw input) trong **< 1ms**.
+  * **Bỏ `@Synchronized` toàn cục:** Dùng `ConcurrentHashMap` và atomic state, không khóa Main Thread khi background thread đang nạp file.
+  * **Fast String Slicing Parser:** Quét vị trí dấu hai chấm `indexOf(':')` và dấu ngoặc kép `indexOf('"')` thay cho Regex, tăng tốc độ nạp dữ liệu từ **2.500ms xuống < 35ms** (~100x).
+
+---
+
+### 2.15. Nghẽn Lệnh Gọi IPC Binder Trong Flutter MethodChannel Handler (`configureFlutterEngine$lambda` - "Lệnh gọi Binder chậm")
+* **Cơ chế lỗi:**
+  * Callback `setMethodCallHandler` của Flutter MethodChannel chạy mặc định trên Main Looper của Android.
+  * Việc gọi trực tiếp các API hệ thống có IPC Binder như `InputMethodManager.getEnabledInputMethodList()`, `Settings.Secure.getString()`, `PackageManager.getPackageInfo()` khiến Main Thread bị block ở hàm native `BinderProxy.transactNative()` khi `system_server` bị trễ.
+  * Google Play Console gắn nhãn cảnh báo chính thức: ⚠️ **"Lệnh gọi Binder chậm"** (*The main thread is busy executing a potentially slow Binder call*).
+* **Giải pháp chuẩn:**
+  * Bắt buộc chuyển toàn bộ các lệnh gọi IPC Binder hoặc truy vấn hệ thống sang Background `ioExecutor`, sau đó post kết quả ngược lại cho Dart thông qua `mainHandler.post { result.success(...) }`.
+
+---
+
+### 2.16. Tranh Chấp Binder Trong Firebase Measurement Khi Bàn Phím Đang Tương Tác Dồn Dập
+* **Cơ chế lỗi:**
+  * Việc gọi `FirebaseAnalytics.getInstance()` và log sự kiện (autocorrect, phím gõ) dồn dập có thể cạnh tranh tài nguyên IPC Binder với bàn phím trên các máy cấu hình yếu, kích hoạt ANR tại `:com.google.android.gms.dynamite_measurementdynamite`.
+* **Giải pháp chuẩn:**
+  * Sử dụng cơ chế Double-Checked Locking với `@Volatile instance` cho `FirebaseAnalytics`.
+  * 100% lệnh ghi log analytics phải đưa vào dedicated background worker với cơ chế fire-and-forget.
 
 ---
 
@@ -604,6 +626,115 @@ PlatformDispatcher.instance.onError = (error, stack) {
        ViewCompat.requestApplyInsets(root)
    }
    ```
+
+---
+
+### 3.9. Non-Blocking In-Memory Trie Tra Cứu O(1) & Fast String Slicing Parser
+
+```kotlin
+// Không bao giờ nạp đĩa đồng bộ trong hàm tra cứu Main Thread
+fun getSuggestions(context: Context?, rawInput: String, langTag: String, maxCount: Int = 3): List<String> {
+    val clean = rawInput.trim()
+    if (clean.isEmpty()) return emptyList()
+
+    val langCode = mapLangCode(langTag)
+    val trie = dictionaries[langCode]
+    if (trie == null || trie.wordSet.isEmpty()) {
+        if (context != null) preload(context, langCode)
+        return listOf(clean) // Trả về ngay lập tức trong < 1ms
+    }
+    return trie.querySuggestions(clean, maxCount)
+}
+
+// Fast string parser nạp 40.000 từ trong < 35ms thay thế Regex.find()
+fun loadFromJsonStream(stream: InputStream, langCode: String): TrieRoot {
+    val trie = TrieRoot()
+    BufferedReader(InputStreamReader(stream, Charsets.UTF_8), 32768).useLines { lines ->
+        for (line in lines) {
+            val trimmed = line.trim()
+            val colonIdx = trimmed.indexOf(':')
+            if (colonIdx > 0) {
+                val q1 = trimmed.indexOf('"')
+                if (q1 != -1 && q1 < colonIdx) {
+                    val q2 = trimmed.indexOf('"', q1 + 1)
+                    if (q2 != -1 && q2 < colonIdx) {
+                        val word = trimmed.substring(q1 + 1, q2)
+                        var endIdx = trimmed.length
+                        if (trimmed.endsWith(',')) endIdx--
+                        val freq = trimmed.substring(colonIdx + 1, endIdx).trim().toIntOrNull()
+                        if (freq != null && word != "word" && word != "freq") {
+                            trie.insert(word, freq)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    dictionaries[langCode] = trie
+    return trie
+}
+```
+
+---
+
+### 3.10. Asynchronous IPC Binder MethodChannel Dispatcher
+
+```kotlin
+// Chuyển toàn bộ các lệnh IPC Binder (Settings, IMM, PackageManager) sang SingleThreadExecutor
+private val ioExecutor = Executors.newSingleThreadExecutor()
+private val mainHandler = Handler(Looper.getMainLooper())
+
+MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+    when (call.method) {
+        "isImeEnabled" -> {
+            ioExecutor.execute {
+                val enabled = isKeyboardEnabled()
+                mainHandler.post { result.success(enabled) }
+            }
+        }
+        "isImeSelected" -> {
+            ioExecutor.execute {
+                val selected = isKeyboardSelected()
+                mainHandler.post { result.success(selected) }
+            }
+        }
+        else -> result.notImplemented()
+    }
+}
+```
+
+---
+
+### 3.11. Throttled & Native View Delegated Haptic Manager
+
+```kotlin
+// 1. Tắt rung trong auto-repeat loop (Backspace continuous delete)
+val deleteRunnable = object : Runnable {
+    override fun run() {
+        if (isDeleting) {
+            onKeyAction(KeyAction.DELETE, null)
+            feedbackManager.playSound()
+            // KHÔNG gọi triggerHaptic() ở đây để tránh spam 20 lần/giây
+            deleteHandler.postDelayed(this, 50)
+        }
+    }
+}
+
+// 2. Cache phần cứng, throttle 35ms và ưu tiên View.performHapticFeedback
+fun triggerHaptic(view: View? = null) {
+    if (!vibrateEnabled) return
+    if (view != null && view.isAttachedToWindow) {
+        if (view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)) return
+    }
+
+    val now = SystemClock.uptimeMillis()
+    if (now - lastHapticTime < 35L) return
+    lastHapticTime = now
+
+    if (!hasVibratorHardware) return
+    vibrator?.vibrate(VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE))
+}
+```
 
 ---
 
