@@ -60,7 +60,8 @@ Khi người dùng yêu cầu implement liên quan đến Ads, IAP/Paywall, Life
   - Không I/O hay font loading trên Main Thread, dùng SingleThreadExecutor cho Disk I/O.
   - Bọc `PlatformViewsController resize race` filter trong `main.dart`.
 - **Performance & FPS:** Đọc `playbooks/03_PERFORMANCE_OPTIMIZATION_PLAYBOOK.md`
-  - Tái sử dụng Matrix, không khởi tạo object trong `onDraw`/`paint()`, offload tác vụ nặng sang `compute()` / `Isolate`.
+  - Tái sử dụng Matrix, không khởi tạo object trong `onDraw`/`paint()`, offload tác vụ nặng sang `compute()` / `Isolate.run()`.
+  - Offload `AES-GCM` + `base64Decode` + `jsonDecode` (>= 16 KB) sang 1 `Isolate.run`, GIF static poster (`_sm_jpg.jpg`) khi cuộn + `_sm_webp.webp` khi nghỉ, giữ nguyên `maxWidthDiskCache` & tắt `fadeOutDuration`, dùng `BackdropFilter.grouped(enabled: ...)` (không unmount), giữ `BoxShadow` tĩnh trong `RepaintBoundary`, và kiểm tra `TickerMode.of(context)` trong `IndexedStack` (chi tiết `--profile`: `bug_vault/flutter/scroll_60fps_isolate_decrypt_gif_poster_and_backdrop_blur.md`).
 
 ### Bước 2: Tra cứu các lỗi đã lưu trong `bug_vault/`
 - Tra cứu nhanh các case study trong thư mục `bug_vault/<category>/` để tránh các bẫy đã từng gặp.

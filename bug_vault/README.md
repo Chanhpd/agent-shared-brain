@@ -16,7 +16,10 @@ bug_vault/
 │   ├── pagination_load_more_vs_bulk_fetching.md
 │   ├── network_image_disk_cache_and_retry_resilience.md
 │   ├── category_navigation_in_memory_cache_and_race_condition.md
-│   └── http_client_keep_alive_and_double_download_elimination.md
+│   ├── http_client_keep_alive_and_double_download_elimination.md
+│   ├── timezone_late_initialization_error_local_notifications.md
+│   ├── network_exception_crashlytics_pollution_filter.md
+│   └── scroll_60fps_isolate_decrypt_gif_poster_and_backdrop_blur.md
 ├── android/                             # Lỗi Android Native, ProGuard, ANR, Gradle, Splash
 └── ios/                                 # Lỗi iOS, Pods, Privacy Manifest, ATT
 ```
@@ -31,6 +34,7 @@ bug_vault/
 5. **[Custom Image Loader Pitfalls & Migration to Standard CachedNetworkImage](flutter/http_client_keep_alive_and_double_download_elimination.md)**: Giải mã 5 cạm bẫy khi tự viết custom image loader (mất Keep-Alive, tải đúp, hủy stream, kẹt queue, leak ticker); chuẩn hóa di chuyển sang `cached_network_image` với LRU disk cache, auto-cancellation on scroll và memCacheWidth.
 6. **[Timezone LateInitializationError (_local / _TFf) in Local Notifications](flutter/timezone_late_initialization_error_local_notifications.md)**: Triệt tiêu lỗi sập app `LateInitializationError: Field '_local' has not been initialized` (hoặc `_TFf` trên bản obfuscated) do xung đột luồng khởi tạo bất đồng bộ giữa FCM và Local Notifications; chuẩn hóa 5 tầng phòng thủ (eager isolate init, safe location getter, await completer guard, và khử rethrow).
 7. **[Network Exception Crashlytics Pollution & Resilient Error Filtering](flutter/network_exception_crashlytics_pollution_filter.md)**: Triệt tiêu hiện tượng ngoại lệ mất mạng thông thường (`SocketException`, `DioException.connectionError`, timeout) bị log thành error gây ô nhiễm Crashlytics và tụt tỷ lệ Crash-free users; chuẩn hóa phân loại `NetworkFailure`, bộ lọc `_isNetworkException` tại `BaseRepository` và quy tắc warning chỉ ghi breadcrumb log.
+8. **[Tối Ưu 60 FPS Scroll: Isolate AES-GCM Decrypt, GIF Static Poster, Zero-Layout BackdropFilter & RepaintBoundary Cache](flutter/scroll_60fps_isolate_decrypt_gif_poster_and_backdrop_blur.md)**: Chuẩn hóa offload giải mã AES-GCM + JSON >= 16 KB sang `Isolate.run`, kiến trúc GIF grid 2 tầng (poster tĩnh khi cuộn + `_sm_webp.webp` khi nghỉ + bỏ `LayoutBuilder`), tạm dừng blur bằng `BackdropFilter.grouped(enabled: ...)` (không unmount), giữ nguyên `maxWidthDiskCache` + zero-fade khi cuộn, đóng băng timer tab ẩn với `TickerMode` và đo benchmark `--profile` qua Dart VM Service.
 
 ### Ads
 1. **[Rewarded Format Mismatch & Fallback Strategy](ads/CASE_STUDY_REWARDED_FORMAT_MISMATCH.md)**: Xử lý lỗi Code 3 và lệch định dạng giữa RewardedAd và RewardedInterstitialAd.

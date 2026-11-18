@@ -202,6 +202,51 @@ RepaintBoundary(
   4. **UI Layer:** Dùng `NotificationListener<ScrollNotification>` với ngưỡng `extentAfter < 400` để tự động tải trang kế tiếp trước khi chạm đáy mà không gây gián đoạn mắt người dùng.
 * **Chi tiết case study & code diff:** Xem `bug_vault/flutter/pagination_load_more_vs_bulk_fetching.md`.
 
+### 4.5. Offload Giải Mã API Payload Lớn (`AES-GCM` + `Base64` + `JSON`) Sang `Isolate.run`
+* **Vấn đề:** Giải mã phản hồi mã hóa lớn bằng pure-Dart (`DartAesGcm.decrypt`, `base64Decode`, `utf8.decode`, `jsonDecode`, parse danh sách model) ngay trên Main Isolate có thể chiếm **5%–7% CPU** và gây rớt khung hình khi người dùng đang cuộn.
+* **Quy chuẩn bắt buộc:**
+  1. Nếu `ciphertext.length >= 16 * 1024` (`16 KB`), gộp toàn bộ `base64Decode` + `decryptAesGcm` + `utf8.decode` + `jsonDecode` vào **1 lời gọi `Isolate.run` duy nhất** ở tầng Dio Interceptor (giảm chi phí copy giữa các isolate xuống 1 lần).
+  2. Tắt dump body ở `LogInterceptor` (`requestBody: false`, `responseBody: false` hoặc chỉ giữ mặc định nhẹ).
+  3. Tại `RemoteDataSource`, offload `Isolate.run(() => parsePayload(rawData))` khi mảng dữ liệu trả về từ 12 phần tử trở lên.
+
+```dart
+// Gộp decrypt + JSON decode vào 1 Isolate.run duy nhất cho payload >= 16 KB
+Future<dynamic> _decryptAndDecodeJsonInIsolate(
+  String iv, String ciphertext, String tag, Uint8List key,
+) async {
+  final bytes = await const CryptographyEngineImpl().decryptAesGcm(
+    ciphertext: base64Decode(ciphertext),
+    key: key,
+    iv: base64Decode(iv),
+    tag: base64Decode(tag),
+  );
+  return jsonDecode(utf8.decode(bytes));
+}
+```
+
+### 4.6. Kiến Trúc Grid GIF / Sticker Động 2 Tầng & `CachedNetworkImage` Zero-Fade
+* **Quy chuẩn Grid GIF/Animated WebP (`SliverGrid`):**
+  1. **2 tầng URL theo trạng thái cuộn (`ScrollJankGuard` + debounce `500ms` sau `ScrollEndNotification`):** Khi đang cuộn, chỉ nạp ảnh poster tĩnh nhẹ (`_sm_jpg.jpg`, `~6 KB`) kèm `ResizeImage(..., width: 220)`. Khi dừng cuộn mới nâng cấp lên `_sm_webp.webp` (`~97 KB`) với `gaplessPlayback: true`.
+  2. **Hạ `cacheExtent: 180` cho tab GIF** để tránh khởi tạo bộ giải mã multi-frame ngoài viewport.
+  3. **Bỏ `LayoutBuilder` trong `SliverGrid`:** Truyền `hasBoundedHeight: true` từ Grid xuống Card cố định chiều cao (`buildMs` giảm ~67%, `LAYOUT max` giảm ~89%).
+  4. **Snapshot JSON Trang 1 + Warmup trễ `800ms`:** Lưu JSON trang đầu xuống đĩa để render tức thì `0ms`, warmup nền sau `HomeLoaded`.
+* **Quy chuẩn `CachedNetworkImage` (TUYỆT ĐỐI KHÔNG BỎ `maxWidthDiskCache`):**
+  * `ImageCacheManager` dùng native C++ `ui.instantiateImageCodec` để lưu thumbnail nhỏ dưới đĩa; xóa `maxWidthDiskCache` sẽ làm **`UploadTextureToPrivate` tăng vọt từ `90ms` lên `1,518ms`**.
+  * Giữ nguyên `memCacheWidth` + `maxWidthDiskCache`, chỉ đặt **`fadeOutDuration: Duration.zero`** và **`fadeInDuration: isScrolling ? Duration.zero : const Duration(milliseconds: 100)`** để triệt tiêu `OpacityLayer` kép đè lên shimmer lúc cuộn.
+
+### 4.7. Tạm Dừng `BackdropFilter` Khi Cuộn Bằng `BackdropFilter.grouped(enabled: ...)` & Bảo Toàn `RepaintBoundary`
+* **Cạm bẫy cần tránh:** Tuyệt đối **không** gắn/gỡ `BackdropFilter` bằng điều kiện `if (isScrolling)` (gây unmount/rebuild con -> `LAYOUT max` vọt lên `200ms+`) và **không** cho card bọc `RepaintBoundary` lắng nghe `ScrollJankGuard` chỉ để tắt `BoxShadow` (làm mất GPU layer cache trên mọi cú fling).
+* **Cách làm chuẩn (Zero-Layout, giảm ~85% `ReactorGLES::Operation`):**
+  1. Bọc cụm frosted glass trong `RepaintBoundary` + `BackdropGroup`.
+  2. Dùng `ValueListenableBuilder<bool>(child: staticChild)` điều khiển `BackdropFilter.grouped(enabled: enableBlur && isBlurActive, ...)` để tắt blur trong `350ms` lúc cuộn mà **không làm đổi cấu trúc cây widget**.
+  3. Trên card lặp lại trong danh sách (`CategoryBannerCard`), mặc định `enableBackdropBlur = false` và giữ `BoxShadow` tĩnh bên trong `RepaintBoundary`.
+
+### 4.8. Vệ Sinh Tab Ẩn `IndexedStack` (`TickerMode`) & Gom Batch Cubit Emit Sau Khi Dừng Cuộn
+1. **Ngắt Timer/Carousel khi tab bị ẩn trong `StatefulShellRoute.indexedStack`:** Kiểm tra `TickerMode.of(context)` trong `build` / `didChangeDependencies()` để dừng `autoPlay` & `Timer.periodic` khi tab không hiển thị.
+2. **Thay `AnimatedBuilder(animation: scrollController)` bằng `ValueNotifier<double>` clamp `[0.0, 1.0]`:** Tránh rebuild vùng header ở mỗi pixel sau khi đã vượt qua ngưỡng collapse.
+3. **Gom Batch Emit:** Khi resolve fallback thumbnail/metadata từ scroll viewport, gom ID vào `Set<String>` và chỉ gọi `resolveFallbackThumbnailsBatch` 1 lần sau `ScrollEndNotification` (`200ms`).
+* **Chi tiết số liệu `--profile` & code mẫu đầy đủ:** Xem `bug_vault/flutter/scroll_60fps_isolate_decrypt_gif_poster_and_backdrop_blur.md`.
+
 ---
 
 ## 5. Tối Ưu Bộ Cài Đặt (App Size Reduction & R8 / ProGuard)
@@ -271,3 +316,8 @@ flutter build appbundle \
 | **5** | Đã bọc `RepaintBoundary` quanh các widget có hoạt họa lặp vô tận. | [ ] |
 | **6** | Bản build phát hành được đóng gói dưới dạng App Bundle (`.aab`) kèm `--obfuscate`. | [ ] |
 | **7** | File `proguard-rules.pro` đã cấu hình đầy đủ cho Glide, AdMob, Billing và SQLite. | [ ] |
+| **8** | Giải mã payload mã hóa lớn (`>= 16 KB`) & parse JSON/DTO lớn (`>= 12` item) đã offload sang `Isolate.run` và tắt `LogInterceptor` body. | [ ] |
+| **9** | `CachedNetworkImage` giữ nguyên `memCacheWidth` / `maxWidthDiskCache` và đặt `fadeOutDuration: Duration.zero`, tắt fade-in khi đang cuộn. | [ ] |
+| **10** | Grid GIF/Animated WebP dùng poster tĩnh khi cuộn (`ScrollJankGuard`), nâng cấp `_sm_webp.webp` khi nghỉ, `cacheExtent: 180` và bỏ `LayoutBuilder`. | [ ] |
+| **11** | `BackdropFilter` dùng `BackdropFilter.grouped(enabled: ...)` qua `ValueListenable` (không mount/unmount); giữ `BoxShadow` tĩnh trong `RepaintBoundary`. | [ ] |
+| **12** | Widget có `Timer.periodic` / carousel `autoPlay` kiểm tra `TickerMode.of(context)` trong `IndexedStack`; fallback API gom batch sau `ScrollEndNotification`. | [ ] |
